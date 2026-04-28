@@ -3,7 +3,8 @@ Predictive Modeling of AQI and PM2.5 Levels in Bangalore
 A Statistical + Machine Learning Approach
 
 ## Project Structure
-notebooks/Bengaluru AQI project.ipynb (google colab file)
+notebooks/01_data_collection.ipynb (google colab file)
+
 
 ## Datasets Used
 - Rohanrao: India Air Quality Data (Kaggle) — AQI, PM2.5, PM10
