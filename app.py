@@ -463,3 +463,23 @@ elif page == '📊 Model Comparison':
                      use_container_width=True)
         except Exception:
             st.info('Upload assets/plot_shap_bar.png to GitHub to display this plot.')
+@st.cache_data
+def load_data():
+    import os
+    # Try multiple possible paths
+    possible_paths = [
+        'data/bangalore_master_aqi.csv',
+        'bangalore_master_aqi.csv',
+        './data/bangalore_master_aqi.csv',
+    ]
+    for path in possible_paths:
+        if os.path.exists(path):
+            df = pd.read_csv(path)
+            df['Date'] = pd.to_datetime(df['Date'])
+            return df.sort_values('Date').reset_index(drop=True)
+    
+    # If nothing found, show helpful error
+    st.error("CSV not found. Files available: " + str(os.listdir('.')))
+    st.stop()
+
+master = load_data()
