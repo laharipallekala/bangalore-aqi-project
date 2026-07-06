@@ -18,7 +18,7 @@ st.set_page_config(
 @st.cache_data
 def load_data():
     df = pd.read_csv('processed/bangalore_master_aqi.csv')
-    df['Date'] = pd.to_datetime(df['Date'], format='%d-%m-%Y')
+    df['Date'] = pd.to_datetime(df['Date'], format='mixed')
     df = df.sort_values('Date').reset_index(drop=True)
     df['AQI_lag1']  = df['AQI'].shift(1)
     df['PM25_lag1'] = df['PM2.5'].shift(1)
