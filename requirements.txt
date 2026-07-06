@@ -8,3 +8,13 @@ shap
 statsmodels
 matplotlib
 seaborn
+streamlit>=1.58
+pandas>=2.2
+numpy>=1.26
+plotly>=5.20
+prophet>=1.1
+scikit-learn>=1.4
+shap>=0.45
+statsmodels>=0.14
+matplotlib>=3.8
+seaborn>=0.13
