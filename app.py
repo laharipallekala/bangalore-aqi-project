@@ -30,7 +30,8 @@ def load_data(path: str) -> pd.DataFrame:
     df["Date"] = pd.to_datetime(df["Date"], format="mixed")
     df = df.sort_values("Date").reset_index(drop=True)
 
-    # Lag / rolling features (used by the what-if predictor below)
+    # Lag / rolling features (used by the what-if predictor and by the
+    # PM2.5 target model below)
     df["AQI_lag1"] = df["AQI"].shift(1)
     df["PM25_lag1"] = df["PM2.5"].shift(1)
     df["AQI_roll7"] = df["AQI"].rolling(7).mean()
@@ -51,26 +52,31 @@ HAS_STATION = "station" in master.columns
 HAS_SEASON = "season" in master.columns
 
 # ────────────────────────────────────────────────────────────────────────────
-# SIMPLE LIVE MODEL (for the what-if sliders on the Predictions page)
+# SIMPLE LIVE MODELS (for the what-if sliders on the Predictions page)
 # Trained once per session on the available features — this is intentionally
 # lightweight so the app doesn't need a pre-pickled model file committed to
 # the repo. Swap this out for joblib.load("model.pkl") if you export one
-# from your notebook.
+# from your notebook. One model per target (AQI, PM2.5) so the what-if tool
+# can predict either pollutant.
 # ────────────────────────────────────────────────────────────────────────────
 @st.cache_resource
-def train_whatif_model(df: pd.DataFrame):
+def train_whatif_model(df: pd.DataFrame, target: str):
     from sklearn.linear_model import LinearRegression
 
-    feature_cols = [c for c in ["temp", "wind_speed", "humidity", "rainfall", "AQI_lag1"] if c in df.columns]
-    model_df = df[feature_cols + ["AQI"]].dropna()
+    # Use weather features plus the *other* pollutant's lag as a predictor —
+    # never a pollutant's own lag, since that would make the slider trivially
+    # predict "yesterday's value" instead of responding to weather changes.
+    if target == "PM2.5":
+        feature_cols = [c for c in ["temp", "wind_speed", "humidity", "rainfall", "AQI_lag1"] if c in df.columns]
+    else:
+        feature_cols = [c for c in ["temp", "wind_speed", "humidity", "rainfall", "PM25_lag1"] if c in df.columns]
 
+    model_df = df[feature_cols + [target]].dropna()
     X = model_df[feature_cols]
-    y = model_df["AQI"]
+    y = model_df[target]
     model = LinearRegression().fit(X, y)
     return model, feature_cols
 
-
-whatif_model, whatif_features = train_whatif_model(master)
 
 # ────────────────────────────────────────────────────────────────────────────
 # SIDEBAR — navigation + global filters
@@ -133,7 +139,7 @@ if page == "Home":
     )
 
     fig = px.line(filtered, x="Date", y="AQI", title="AQI over time (filtered range)")
-    fig.update_layout(height=350)
+    fig.update_layout(height=350, xaxis_title="Date", yaxis_title="AQI")
     st.plotly_chart(fig, use_container_width=True)
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -149,17 +155,20 @@ elif page == "Trends":
         color="season" if HAS_SEASON else None,
         title=f"{metric} over time",
     )
+    fig1.update_layout(xaxis_title="Date", yaxis_title=metric)
     st.plotly_chart(fig1, use_container_width=True)
 
     col1, col2 = st.columns(2)
     with col1:
         if HAS_SEASON:
             fig2 = px.box(filtered, x="season", y=metric, title=f"{metric} distribution by season")
+            fig2.update_layout(xaxis_title="Season", yaxis_title=metric)
             st.plotly_chart(fig2, use_container_width=True)
     with col2:
         if "day_of_week" in filtered.columns:
             dow_avg = filtered.groupby("day_of_week")[metric].mean().reset_index()
             fig3 = px.bar(dow_avg, x="day_of_week", y=metric, title=f"Avg {metric} by day of week")
+            fig3.update_layout(xaxis_title="Day of week", yaxis_title=f"Avg {metric}")
             st.plotly_chart(fig3, use_container_width=True)
 
     st.markdown("### Correlation heatmap")
@@ -175,41 +184,75 @@ elif page == "Trends":
 elif page == "Predictions":
     st.title("Forecasting & What-If Analysis")
 
+    target = st.radio("Pollutant to predict", ["AQI", "PM2.5"], horizontal=True)
+    target_col = "AQI" if target == "AQI" else "PM2.5"
+
     tab1, tab2 = st.tabs(["📈 Prophet Forecast", "🎛️ What-If Slider"])
 
     with tab1:
-        st.subheader("Prophet forecast — future AQI trend")
+        st.subheader(f"Prophet forecast — future {target} trend")
         horizon = st.slider("Days to forecast", 7, 90, 30)
 
         @st.cache_resource
-        def fit_prophet(df: pd.DataFrame):
+        def fit_prophet(df: pd.DataFrame, col: str):
             from prophet import Prophet
 
-            prophet_df = df[["Date", "AQI"]].rename(columns={"Date": "ds", "AQI": "y"}).dropna()
+            prophet_df = df[["Date", col]].rename(columns={"Date": "ds", col: "y"}).dropna()
             m = Prophet(yearly_seasonality=True, weekly_seasonality=True, daily_seasonality=False)
             m.fit(prophet_df)
             return m
 
         with st.spinner("Fitting Prophet model..."):
-            m = fit_prophet(master)
+            m = fit_prophet(master, target_col)
             future = m.make_future_dataframe(periods=horizon)
             forecast = m.predict(future)
 
-        fig = px.line(forecast, x="ds", y="yhat", title=f"AQI forecast — next {horizon} days")
-        fig.add_scatter(x=forecast["ds"], y=forecast["yhat_upper"], mode="lines", line=dict(width=0), showlegend=False)
+        # Only plot the last 60 days of *history* plus the forecasted horizon.
+        # Plotting the full 5.5-year history made the chart look identical
+        # regardless of the slider, since a few extra/fewer future days were
+        # a tiny sliver of ~2000 total days. Zooming in makes the slider's
+        # effect visible, and clearly separates "known" from "forecast".
+        last_actual_date = master["Date"].max()
+        context_start = last_actual_date - pd.Timedelta(days=60)
+
+        history_view = forecast[forecast["ds"] <= last_actual_date]
+        history_view = history_view[history_view["ds"] >= context_start]
+        future_view = forecast[forecast["ds"] > last_actual_date]
+
+        fig = px.line(title=f"{target} forecast — last 60 days + next {horizon} days")
         fig.add_scatter(
-            x=forecast["ds"], y=forecast["yhat_lower"], mode="lines", line=dict(width=0),
-            fill="tonexty", fillcolor="rgba(99,110,250,0.2)", name="Confidence interval",
+            x=history_view["ds"], y=history_view["yhat"], mode="lines",
+            name="Fitted (recent history)", line=dict(color="#636EFA"),
         )
+        fig.add_scatter(
+            x=future_view["ds"], y=future_view["yhat"], mode="lines",
+            name=f"Forecast (next {horizon} days)", line=dict(color="#EF553B", dash="dash"),
+        )
+        fig.add_scatter(
+            x=future_view["ds"], y=future_view["yhat_upper"], mode="lines",
+            line=dict(width=0), showlegend=False,
+        )
+        fig.add_scatter(
+            x=future_view["ds"], y=future_view["yhat_lower"], mode="lines", line=dict(width=0),
+            fill="tonexty", fillcolor="rgba(239,85,59,0.15)", name="Forecast confidence interval",
+        )
+        fig.add_vline(x=last_actual_date, line_dash="dot", line_color="gray")
+        fig.update_layout(xaxis_title="Date", yaxis_title=f"{target} (predicted)", height=420)
         st.plotly_chart(fig, use_container_width=True)
+        st.caption(
+            f"Dotted vertical line marks today ({last_actual_date.date()}) — the model has real data "
+            "to the left, and is extrapolating to the right. Drag the slider above to extend or "
+            "shorten that right-hand forecast window."
+        )
 
     with tab2:
-        st.subheader("Adjust weather inputs to see the predicted AQI change")
+        st.subheader(f"Adjust weather inputs to see the predicted {target} change")
         st.caption(
             "Powered by a lightweight linear model trained on the full dataset "
             "(swap in your saved Random Forest / OLS model for production use)."
         )
 
+        whatif_model, whatif_features = train_whatif_model(master, target_col)
         last_row = master.dropna(subset=whatif_features).iloc[-1]
         inputs = {}
         cols = st.columns(len(whatif_features))
@@ -220,28 +263,58 @@ elif page == "Predictions":
         X_input = pd.DataFrame([inputs])[whatif_features]
         pred = whatif_model.predict(X_input)[0]
 
-        st.metric("Predicted AQI", f"{pred:.0f}")
+        st.metric(f"Predicted {target}", f"{pred:.0f}" if target == "AQI" else f"{pred:.1f}")
 
 # ────────────────────────────────────────────────────────────────────────────
 # PAGE: MODEL COMPARISON
 # ────────────────────────────────────────────────────────────────────────────
 elif page == "Model Comparison":
     st.title("Model Comparison")
+    st.caption(
+        "All models were evaluated on the same chronological test set "
+        "(June 2019 – July 2020) to keep the comparison fair."
+    )
 
-    # NOTE: fill these in with the exact numbers from your notebook's final
-    # evaluation cell if they differ — these are placeholders based on the
-    # results referenced in 03_modeling.ipynb.
     results = pd.DataFrame(
         {
-            "Model": ["OLS Linear Regression", "Decision Tree Regressor", "Random Forest Regressor"],
-            "MAE": [9.35, 11.13, 9.11],
-            "RMSE": [None, None, None],
-            "R²": [0.6239, 0.4683, 0.6181],
+            "Model": [
+                "Random Forest (tuned)", "OLS Linear Regression", "Decision Tree (tuned)",
+                "SARIMA(1,1,1)(1,1,1,365)", "ARIMA(1,1,1)", "Prophet (+ weather regressors)",
+            ],
+            "MAE": [9.11, 9.35, 11.13, 28.08, 29.13, 45.91],
+            "RMSE": [12.09, 12.00, 14.27, 31.86, 32.83, 50.21],
+            "R²": [0.618, 0.624, 0.468, -1.651, -1.816, -5.590],
         }
     )
     st.dataframe(results, use_container_width=True)
 
+    with st.expander("ℹ️ What do MAE, RMSE, and R² mean?", expanded=True):
+        st.markdown(
+            """
+- **MAE (Mean Absolute Error)** — the average size of the model's prediction error, in AQI units.
+  An MAE of 9.11 means predictions are, on average, about 9 AQI points off from the true value.
+  **Lower is better.**
+- **RMSE (Root Mean Squared Error)** — similar to MAE, but squares errors before averaging, so it
+  punishes large mistakes more heavily than small ones. If RMSE is much bigger than MAE, the model
+  is making a few very large errors on top of many small ones. **Lower is better.**
+- **R² (R-squared)** — the share of variation in actual AQI that the model successfully explains,
+  from 1.0 (perfect) down to negative values (worse than just guessing the average every time).
+  A **negative R²**, like SARIMA/ARIMA/Prophet show here, means those models perform *worse* than a
+  naive "predict the historical average" baseline on this particular test window — driven by the
+  COVID-19 lockdown period sitting inside the test set, which none of those models had seen a
+  precedent for. **Higher is better.**
+
+**Bottom line:** Random Forest and OLS Linear Regression are the two usable models here — they're
+close enough in accuracy that OLS's simplicity and interpretability make it a reasonable first
+choice, with Random Forest as a slightly more accurate but less transparent alternative.
+            """
+        )
+
     st.markdown("### SHAP feature importance (Random Forest)")
+    st.markdown(
+        "SHAP values explain *why* the Random Forest model makes the predictions it does, by "
+        "attributing each prediction to the features that pushed it up or down."
+    )
     col1, col2 = st.columns(2)
 
     def find_image(name: str):
@@ -256,10 +329,24 @@ elif page == "Model Comparison":
     with col1:
         if bar_path:
             st.image(bar_path, caption="Mean |SHAP value| — overall importance")
+            st.caption(
+                "**How to read this:** longer bars = features the model relies on more heavily "
+                "across all its predictions, regardless of direction. AQI_lag1 (yesterday's AQI) "
+                "and PM25_lag1 (yesterday's PM2.5) dominate — together they explain roughly "
+                "two-thirds of the model's predictive power, confirming that pollution is highly "
+                "persistent day-to-day."
+            )
         else:
             st.info("plot_shap_bar.png not found in assets/ or repo root.")
     with col2:
         if beeswarm_path:
             st.image(beeswarm_path, caption="SHAP beeswarm — direction & magnitude")
+            st.caption(
+                "**How to read this:** each dot is one test-set day. Red = high feature value, "
+                "blue = low. Dots to the right push the prediction *up*; dots to the left push it "
+                "*down*. E.g. red dots (high wind_speed) sitting left of center confirm wind "
+                "lowers predicted AQI, while red dots (high AQI_lag1) sitting right confirm "
+                "yesterday's pollution carries forward into today's prediction."
+            )
         else:
             st.info("plot_shap_beeswarm.png not found in assets/ or repo root.")
