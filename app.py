@@ -115,7 +115,7 @@ if station_filter:
 # PAGE: HOME
 # ────────────────────────────────────────────────────────────────────────────
 if page == "Home":
-    st.title("Bangalore Air Quality — Overview")
+    st.title("Bangalore Air Quality: Overview")
     st.caption("Predictive modeling of AQI and PM2.5 using historical weather and pollution data.")
 
     c1, c2, c3, c4 = st.columns(4)
@@ -127,7 +127,7 @@ if page == "Home":
     st.markdown("### Key insights from EDA")
     st.markdown(
         """
-- **AQI shows strong seasonality** — pollution levels rise in the dry winter months and
+- **AQI shows strong seasonality** - pollution levels rise in the dry winter months and
   drop sharply during the monsoon, driven largely by rainfall and wind speed.
 - **Yesterday's AQI is the single strongest predictor** of today's AQI (`AQI_lag1`),
   reflecting the persistence of pollution episodes.
@@ -287,6 +287,39 @@ elif page == "Model Comparison":
         }
     )
     st.dataframe(results, use_container_width=True)
+
+    with st.expander("🤔 Why is Prophet included if it performed worst?", expanded=False):
+        st.markdown(
+            """
+Prophet isn't here because it's competitive on this test set — it's here because it was part of
+the project's original scope, and because *why it underperforms* is itself a useful finding.
+
+- **It was scoped from the start.** The project's methodology names ARIMA, SARIMA, and Prophet as
+  the primary statistical forecasting track (trend + seasonality decomposition), separate from the
+  OLS/Decision Tree/Random Forest ML track. Dropping the weakest result would mean not reporting the
+  full comparison that was actually planned and run.
+- **A fair comparison has to include the losers, not just the winners.** Showing only the two best
+  models would make the analysis look cherry-picked. Including all six shows every approach was
+  genuinely tested against the same test set, rather than the outcome being assumed in advance.
+- **Its failure has a specific, identifiable cause — it isn't just "a bad model."** Prophet works by
+  fitting a smooth trend-plus-seasonality curve and extrapolating it forward, which assumes the
+  future looks statistically like the past. The test window (June 2019 – July 2020) includes the
+  COVID-19 lockdowns, when Bangalore's AQI dropped sharply due to a one-off collapse in traffic and
+  industrial activity — not a seasonal pattern. Prophet had no way to anticipate that from pre-2020
+  data, so it kept forecasting a "normal" seasonal curve while actual AQI fell far below it. That's
+  exactly why its R² is so deeply negative (-5.59): confidently wrong during a structural break,
+  not just imprecise.
+- **The contrast is a real methodological conclusion.** Trend-decomposition models like Prophet suit
+  stable, cyclical forecasting — genuinely their strength — but are fragile to regime shocks. The
+  lag-feature-based ML models (Random Forest, OLS) lean on *yesterday's actual reading* rather than a
+  fitted long-term curve, so they adapt one day at a time instead of extrapolating blindly through
+  a shock.
+
+**In short:** Prophet's presence here demonstrates the full scoped model set was evaluated honestly,
+and its underperformance is explained by a specific cause (COVID-19) rather than hidden from the
+comparison.
+            """
+        )
 
     with st.expander("ℹ️ What do MAE, RMSE, and R² mean?", expanded=True):
         st.markdown(
