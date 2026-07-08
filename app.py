@@ -115,7 +115,7 @@ if station_filter:
 # PAGE: HOME
 # ────────────────────────────────────────────────────────────────────────────
 if page == "Home":
-    st.title("Bangalore Air Quality: Overview")
+    st.title("Bangalore Air Quality — Overview")
     st.caption("Predictive modeling of AQI and PM2.5 using historical weather and pollution data.")
 
     c1, c2, c3, c4 = st.columns(4)
@@ -127,7 +127,7 @@ if page == "Home":
     st.markdown("### Key insights from EDA")
     st.markdown(
         """
-- **AQI shows strong seasonality** - pollution levels rise in the dry winter months and
+- **AQI shows strong seasonality** — pollution levels rise in the dry winter months and
   drop sharply during the monsoon, driven largely by rainfall and wind speed.
 - **Yesterday's AQI is the single strongest predictor** of today's AQI (`AQI_lag1`),
   reflecting the persistence of pollution episodes.
@@ -270,10 +270,7 @@ elif page == "Predictions":
 # ────────────────────────────────────────────────────────────────────────────
 elif page == "Model Comparison":
     st.title("Model Comparison")
-    st.caption(
-        "All models were evaluated on the same chronological test set "
-        "(June 2019 – July 2020) to keep the comparison fair."
-    )
+    st.caption("All models tested on the same holdout period: June 2019 – July 2020.")
 
     results = pd.DataFrame(
         {
@@ -288,67 +285,34 @@ elif page == "Model Comparison":
     )
     st.dataframe(results, use_container_width=True)
 
-    with st.expander("🤔 Why is Prophet included if it performed worst?", expanded=False):
+    with st.expander("Why is Prophet included if it performed worst?"):
         st.markdown(
             """
-Prophet isn't here because it's competitive on this test set — it's here because it was part of
-the project's original scope, and because *why it underperforms* is itself a useful finding.
-
-- **It was scoped from the start.** The project's methodology names ARIMA, SARIMA, and Prophet as
-  the primary statistical forecasting track (trend + seasonality decomposition), separate from the
-  OLS/Decision Tree/Random Forest ML track. Dropping the weakest result would mean not reporting the
-  full comparison that was actually planned and run.
-- **A fair comparison has to include the losers, not just the winners.** Showing only the two best
-  models would make the analysis look cherry-picked. Including all six shows every approach was
-  genuinely tested against the same test set, rather than the outcome being assumed in advance.
-- **Its failure has a specific, identifiable cause — it isn't just "a bad model."** Prophet works by
-  fitting a smooth trend-plus-seasonality curve and extrapolating it forward, which assumes the
-  future looks statistically like the past. The test window (June 2019 – July 2020) includes the
-  COVID-19 lockdowns, when Bangalore's AQI dropped sharply due to a one-off collapse in traffic and
-  industrial activity — not a seasonal pattern. Prophet had no way to anticipate that from pre-2020
-  data, so it kept forecasting a "normal" seasonal curve while actual AQI fell far below it. That's
-  exactly why its R² is so deeply negative (-5.59): confidently wrong during a structural break,
-  not just imprecise.
-- **The contrast is a real methodological conclusion.** Trend-decomposition models like Prophet suit
-  stable, cyclical forecasting — genuinely their strength — but are fragile to regime shocks. The
-  lag-feature-based ML models (Random Forest, OLS) lean on *yesterday's actual reading* rather than a
-  fitted long-term curve, so they adapt one day at a time instead of extrapolating blindly through
-  a shock.
-
-**In short:** Prophet's presence here demonstrates the full scoped model set was evaluated honestly,
-and its underperformance is explained by a specific cause (COVID-19) rather than hidden from the
-comparison.
+Prophet was part of the original modeling plan, so it's shown alongside the rest rather than
+quietly dropped. Its poor score has a clear cause: the test period includes the 2020 COVID
+lockdowns, when AQI fell sharply due to a one-off drop in traffic — not the kind of seasonal
+pattern Prophet is built to extrapolate. Random Forest and OLS handle this better because they
+lean on *yesterday's* reading rather than a long-term curve, so they adapt day by day instead of
+extrapolating through the shock.
             """
         )
 
-    with st.expander("ℹ️ What do MAE, RMSE, and R² mean?", expanded=True):
+    with st.expander("What do MAE, RMSE, and R² mean?"):
         st.markdown(
             """
-- **MAE (Mean Absolute Error)** — the average size of the model's prediction error, in AQI units.
-  An MAE of 9.11 means predictions are, on average, about 9 AQI points off from the true value.
-  **Lower is better.**
-- **RMSE (Root Mean Squared Error)** — similar to MAE, but squares errors before averaging, so it
-  punishes large mistakes more heavily than small ones. If RMSE is much bigger than MAE, the model
-  is making a few very large errors on top of many small ones. **Lower is better.**
-- **R² (R-squared)** — the share of variation in actual AQI that the model successfully explains,
-  from 1.0 (perfect) down to negative values (worse than just guessing the average every time).
-  A **negative R²**, like SARIMA/ARIMA/Prophet show here, means those models perform *worse* than a
-  naive "predict the historical average" baseline on this particular test window — driven by the
-  COVID-19 lockdown period sitting inside the test set, which none of those models had seen a
-  precedent for. **Higher is better.**
+- **MAE** — average prediction error, in AQI units. Lower is better.
+- **RMSE** — same idea, but penalizes big misses more. Lower is better.
+- **R²** — how much of the AQI variation the model explains (1.0 = perfect). Negative means it's
+  doing worse than just guessing the average — which is what happens to the time-series models
+  during the COVID window.
 
-**Bottom line:** Random Forest and OLS Linear Regression are the two usable models here — they're
-close enough in accuracy that OLS's simplicity and interpretability make it a reasonable first
-choice, with Random Forest as a slightly more accurate but less transparent alternative.
+**Takeaway:** Random Forest and OLS are the two models worth using. They're close enough that OLS's
+simplicity makes it the easier default, with Random Forest as a slightly sharper alternative.
             """
         )
 
     st.markdown("### SHAP feature importance (Random Forest)")
-    st.markdown(
-        "SHAP values explain *why* the Random Forest model makes the predictions it does, by "
-        "attributing each prediction to the features that pushed it up or down."
-    )
-    col1, col2 = st.columns(2)
+    st.caption("Which features actually move the model's predictions, and in which direction.")
 
     def find_image(name: str):
         for candidate in [f"assets/{name}", name]:
@@ -359,27 +323,19 @@ choice, with Random Forest as a slightly more accurate but less transparent alte
     bar_path = find_image("plot_shap_bar.png")
     beeswarm_path = find_image("plot_shap_beeswarm.png")
 
+    col1, col2 = st.columns(2)
     with col1:
         if bar_path:
-            st.image(bar_path, caption="Mean |SHAP value| — overall importance")
-            st.caption(
-                "**How to read this:** longer bars = features the model relies on more heavily "
-                "across all its predictions, regardless of direction. AQI_lag1 (yesterday's AQI) "
-                "and PM25_lag1 (yesterday's PM2.5) dominate — together they explain roughly "
-                "two-thirds of the model's predictive power, confirming that pollution is highly "
-                "persistent day-to-day."
-            )
+            st.image(bar_path, caption="Overall importance — longer bar, bigger influence")
         else:
             st.info("plot_shap_bar.png not found in assets/ or repo root.")
     with col2:
         if beeswarm_path:
-            st.image(beeswarm_path, caption="SHAP beeswarm — direction & magnitude")
-            st.caption(
-                "**How to read this:** each dot is one test-set day. Red = high feature value, "
-                "blue = low. Dots to the right push the prediction *up*; dots to the left push it "
-                "*down*. E.g. red dots (high wind_speed) sitting left of center confirm wind "
-                "lowers predicted AQI, while red dots (high AQI_lag1) sitting right confirm "
-                "yesterday's pollution carries forward into today's prediction."
-            )
+            st.image(beeswarm_path, caption="Red = high value, blue = low. Right = pushes AQI up.")
         else:
             st.info("plot_shap_beeswarm.png not found in assets/ or repo root.")
+
+    st.caption(
+        "Yesterday's AQI and PM2.5 dominate — pollution is persistent day to day. "
+        "Wind and rain are the biggest natural dampeners."
+    )
